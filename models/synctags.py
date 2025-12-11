@@ -86,6 +86,73 @@ class SyncTags(models.Model):
     label_height_mm = fields.Integer(string="Alto etiqueta (mm)", default=50, required=True)
 
     # ---------------------------
+    # Boton test impresora
+    # ---------------------------
+    def test_printer(self):
+        """Envía una etiqueta de prueba a la impresora actual."""
+        for record in self:
+            try:
+                # ZPL simple de prueba
+                sample_zpl = b"^XA\n^FO50,50^ADN,36,20^FDTest Impresora^FS\n^XZ"
+
+                # Ajustar al tamaño configurado (usa el mismo método que print_labels)
+                data_to_send = record._apply_label_size(sample_zpl)
+
+                sent = False
+                errors = []
+
+                # Intento RAW directo a la impresora
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(5)
+                    sock.connect((record.printer_ip, record.printer_port))
+                    sock.sendall(data_to_send)
+                    sock.close()
+                    sent = True
+                except Exception as e:
+                    errors.append(f"RAW: {e}")
+                    _logger.error(f"Error RAW en test_printer: {e}")
+
+                # Fallback CUPS si está habilitado
+                if not sent and record.cups_enabled and record.cups_printer:
+                    try:
+                        import subprocess
+                        process = subprocess.Popen(
+                            ['lp', '-d', record.cups_printer],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        stdout, stderr = process.communicate(input=data_to_send)
+                        if process.returncode != 0:
+                            raise UserError(
+                                stderr.decode('utf-8') or 'Error desconocido en CUPS (test_printer).'
+                            )
+                        sent = True
+                    except Exception as e:
+                        errors.append(f"CUPS: {e}")
+                        _logger.error(f"Error CUPS en test_printer: {e}")
+
+                if not sent:
+                    msg = f"No se pudo imprimir la etiqueta de prueba: {'; '.join(errors)}"
+                    record.send_notification("Error en prueba de impresora", msg, 'danger', True)
+                    raise UserError(msg)
+
+                # OK
+                record.send_notification(
+                    "Prueba de impresora",
+                    f"Se envió una etiqueta de prueba a {record.printer_ip}:{record.printer_port}.",
+                )
+                _logger.info(
+                    f"Etiqueta de prueba enviada a {record.printer_ip}:{record.printer_port}"
+                )
+
+            except Exception as e:
+                # Si algo se rompe, lo mostramos bien en la UI
+                _logger.error(f"Error en test_printer: {e}")
+                raise UserError(f"Error en prueba de impresora: {e}")
+
+    # ---------------------------
     # Conexión XML-RPC centralizada
     # ---------------------------
     def connection(self):
