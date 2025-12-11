@@ -337,32 +337,47 @@ class SyncTags(models.Model):
                 raise UserError(f"Error obteniendo las órdenes: {e}")
 
     # ---------------------------
-    # Descarga de adjuntos
+    # Descarga de adjuntos (sin ORM dentro de threads)
     # ---------------------------
     def download_attachment(self, file_data, picking_id, file_name, order_name):
-        for record in self:
-            try:
-                _logger.info(
-                    f"Inicio de descarga: Orden={order_name}, Picking={picking_id}, Archivo={file_name}"
-                )
-                if not os.path.exists(record.directory):
-                    os.makedirs(record.directory, exist_ok=True)
+        """Descarga un adjunto al filesystem.
 
-                safe_file_name = f"{order_name}_{picking_id}_{file_name.replace('/', '_')}"
-                file_path = os.path.join(record.directory, safe_file_name)
+        IMPORTANTE: este método se ejecuta dentro de hilos (ThreadPoolExecutor),
+        por lo tanto NO debe usar self.env, UserError ni nada del ORM.
+        Solo loguea y lanza excepciones normales.
+        """
+        # Usamos el primer record (en este caso, siempre se llama sobre un solo registro)
+        record = self[0]
+        try:
+            _logger.info(
+                f"Inicio de descarga: Orden={order_name}, Picking={picking_id}, Archivo={file_name}"
+            )
 
-                file_content = base64.b64decode(file_data or b'')
-                if not file_content:
-                    raise UserError(f"El archivo {file_name} está vacío o corrupto.")
+            # Crear directorio si no existe
+            if not os.path.exists(record.directory):
+                os.makedirs(record.directory, exist_ok=True)
 
-                with open(file_path, 'wb') as f:
-                    f.write(file_content)
+            safe_file_name = f"{order_name}_{picking_id}_{file_name.replace('/', '_')}"
+            file_path = os.path.join(record.directory, safe_file_name)
 
-                _logger.info(f"Archivo descargado exitosamente: {file_path}")
-                record.send_notification("Etiqueta Descargada", f"Se descargó la etiqueta: {safe_file_name}")
-            except Exception as e:
-                _logger.error(f"Error al guardar el archivo {file_name}: {e}")
-                raise UserError(f"Error al guardar el archivo {file_name}: {e}")
+            # Decodificar contenido
+            file_content = base64.b64decode(file_data or b'')
+            if not file_content:
+                # Lanzamos una excepción normal, que se verá luego en el hilo principal
+                raise Exception(f"El archivo {file_name} está vacío o corrupto.")
+
+            # Guardar archivo
+            with open(file_path, 'wb') as f:
+                f.write(file_content)
+
+            _logger.info(f"Archivo descargado exitosamente: {file_path}")
+
+        except Exception as e:
+            # Solo logueamos y re-lanzamos una Exception normal
+            _logger.error(f"Error al guardar el archivo {file_name}: {e}")
+            # Esto hará que future.result() en process_orders falle
+            raise Exception(f"Error al guardar el archivo {file_name}: {e}")
+
 
     def clear_labels(self):
         """Elimina los .txt del directorio configurado."""
