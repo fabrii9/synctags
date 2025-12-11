@@ -5,27 +5,13 @@ import os
 import base64
 import logging
 import xmlrpc.client
-from odoo import models, fields, api
+from odoo import models, fields
 from odoo.exceptions import UserError
 import time
 from concurrent.futures import ThreadPoolExecutor
 import re
 
 _logger = logging.getLogger(__name__)
-
-
-class ProcessedOrderLog(models.Model):
-    _name = 'processed.order.log'
-    _description = 'Log de Órdenes Procesadas'
-
-    order_name = fields.Char(string="Nombre de Orden", required=True)
-    label_name = fields.Char(string="Nombre de Etiqueta")
-    processed_date = fields.Datetime(
-        string="Fecha Procesada",
-        required=True,
-        default=fields.Datetime.now
-    )
-    synctags_id = fields.Many2one('synctags.synctags', string="SyncTags", ondelete='cascade')
 
 
 class SyncTags(models.Model):
@@ -116,7 +102,7 @@ class SyncTags(models.Model):
                 raise UserError(f"Error conectando al servidor: {e}")
 
     # ---------------------------
-    # Notificaciones UI
+    # Wrapper XML-RPC con retry (anti 429)
     # ---------------------------
     def _execute_kw_with_retry(self, models_proxy, db, uid, password,
                                model_name, method, args, kwargs=None):
@@ -160,6 +146,9 @@ class SyncTags(models.Model):
                 # Otros errores, los dejamos subir tal cual
                 raise
 
+    # ---------------------------
+    # Notificaciones UI
+    # ---------------------------
     def send_notification(self, title, message, message_type='info', sticky=False):
         payload = {'title': title, 'message': message, 'sticky': sticky, 'type': message_type}
         self.env['bus.bus'].sudo()._sendone(self.env.user.partner_id, 'simple_notification', payload)
@@ -220,7 +209,6 @@ class SyncTags(models.Model):
                     ('order_line.name', 'ilike', record.order_line_filter),
                     ('tag_ids', '=', False),
                 ]
-                # Si querés filtrar por team remoto, descomentá:
                 # if record.team_remote_id:
                 #     criteria.append(('team_id', '=', record.team_remote_id))
 
@@ -287,7 +275,9 @@ class SyncTags(models.Model):
     def download_attachment(self, file_data, picking_id, file_name, order_name):
         for record in self:
             try:
-                _logger.info(f"Inicio de descarga: Orden={order_name}, Picking={picking_id}, Archivo={file_name}")
+                _logger.info(
+                    f"Inicio de descarga: Orden={order_name}, Picking={picking_id}, Archivo={file_name}"
+                )
                 if not os.path.exists(record.directory):
                     os.makedirs(record.directory, exist_ok=True)
 
@@ -334,15 +324,22 @@ class SyncTags(models.Model):
 
                 orders = record.get_orders()
                 if not orders:
-                    record.send_notification("Sin Órdenes", "No se encontraron órdenes para procesar.", 'warning', True)
+                    record.send_notification(
+                        "Sin Órdenes",
+                        "No se encontraron órdenes para procesar.",
+                        'warning',
+                        True,
+                    )
                     record.result_summary = "No se encontraron órdenes para procesar."
                     continue
 
-                record.send_notification("Órdenes Obtenidas", f"Se obtuvieron {len(orders)} órdenes para procesar.")
+                record.send_notification(
+                    "Órdenes Obtenidas",
+                    f"Se obtuvieron {len(orders)} órdenes para procesar.",
+                )
                 _logger.info(f"Órdenes: {len(orders)}")
 
                 models_proxy, uid, db, password = record.connection()
-
                 sale_order_ids = [o['id'] for o in orders]
 
                 # Primer pool: obtener pickings y adjuntos
@@ -353,8 +350,12 @@ class SyncTags(models.Model):
                     pickings = pickings_future.result()
 
                     if not pickings:
-                        record.send_notification("Sin Entregas", "No se encontraron entregas para estas órdenes.", 'warning',
-                                                 True)
+                        record.send_notification(
+                            "Sin Entregas",
+                            "No se encontraron entregas para estas órdenes.",
+                            'warning',
+                            True,
+                        )
                         record.result_summary = "No se encontraron entregas para estas órdenes."
                         continue
 
@@ -366,34 +367,35 @@ class SyncTags(models.Model):
                     attachments = attachments_future.result()
 
                 if not attachments:
-                    record.send_notification("Sin Adjuntos", "No se encontraron adjuntos para las entregas.", 'warning',
-                                             True)
+                    record.send_notification(
+                        "Sin Adjuntos",
+                        "No se encontraron adjuntos para las entregas.",
+                        'warning',
+                        True,
+                    )
                     record.result_summary = "No se encontraron adjuntos para las entregas."
                     continue
 
-                # Filtrar solo .txt
                 attachments_txt = [a for a in attachments if a['name'].endswith('.txt')]
                 if not attachments_txt:
                     record.send_notification(
                         "Sin Etiquetas TXT",
                         "No se encontraron adjuntos .txt en las entregas.",
                         'warning',
-                        True
+                        True,
                     )
                     record.result_summary = "No se encontraron adjuntos .txt en las entregas."
                     continue
 
-                # Mapear picking -> orden
                 picking_to_order = {}
                 for p in pickings:
                     if p.get('sale_id'):
                         picking_to_order[p['id']] = p['sale_id'][0]
 
-                # Procesar en batches
                 total_attachments = len(attachments_txt)
                 record.send_notification(
                     "Descarga de Etiquetas",
-                    f"Se encontraron {total_attachments} etiquetas .txt para procesar."
+                    f"Se encontraron {total_attachments} etiquetas .txt para procesar.",
                 )
                 _logger.info(f"Total de etiquetas .txt a procesar: {total_attachments}")
 
@@ -403,8 +405,9 @@ class SyncTags(models.Model):
                 ]
 
                 for batch_index, batch in enumerate(batches, start=1):
-                    _logger.info(f"Procesando lote {batch_index}/{len(batches)} con {len(batch)} adjuntos")
-
+                    _logger.info(
+                        f"Procesando lote {batch_index}/{len(batches)} con {len(batch)} adjuntos"
+                    )
                     with ThreadPoolExecutor(max_workers=record.max_threads) as executor:
                         futures = []
                         for attachment in batch:
@@ -414,13 +417,14 @@ class SyncTags(models.Model):
                             order_id = picking_to_order.get(picking_id)
 
                             if not order_id:
-                                _logger.warning(f"Picking {picking_id} sin orden asociada. Saltando.")
+                                _logger.warning(
+                                    f"Picking {picking_id} sin orden asociada. Saltando."
+                                )
                                 continue
 
-                            # Buscar el nombre de la orden
                             order_name = next(
                                 (o['name'] for o in orders if o['id'] == order_id),
-                                f"SO_{order_id}"
+                                f"SO_{order_id}",
                             )
 
                             futures.append(
@@ -429,21 +433,21 @@ class SyncTags(models.Model):
                                     file_data,
                                     picking_id,
                                     file_name,
-                                    order_name
+                                    order_name,
                                 )
                             )
 
-                        # Esperar a que termine el batch
                         for future in futures:
                             future.result()
 
-                record.result_summary = f"Descarga completada. Total de etiquetas procesadas: {total_attachments}."
-                record.send_notification(
-                    "Procesamiento Completado",
+                record.result_summary = (
                     f"Descarga completada. Total de etiquetas procesadas: {total_attachments}."
                 )
+                record.send_notification(
+                    "Procesamiento Completado",
+                    f"Descarga completada. Total de etiquetas procesadas: {total_attachments}.",
+                )
 
-                # Al finalizar la descarga, se imprimen las etiquetas
                 record.print_labels()
 
             except Exception as e:
@@ -452,7 +456,7 @@ class SyncTags(models.Model):
                     "Error en Procesamiento",
                     f"Error en el procesamiento de órdenes: {e}",
                     'danger',
-                    True
+                    True,
                 )
                 raise UserError(f"Error en el procesamiento de órdenes: {e}")
 
@@ -475,7 +479,7 @@ class SyncTags(models.Model):
                     "Error de Conexión",
                     f"No se pudo conectar a la impresora: {e}",
                     'danger',
-                    True
+                    True,
                 )
                 raise UserError(f"No se pudo conectar a la impresora: {e}")
 
@@ -485,7 +489,6 @@ class SyncTags(models.Model):
                 if not record.directory or not os.path.isdir(record.directory):
                     raise UserError("El directorio de etiquetas no es válido.")
 
-                # Listar archivos .txt
                 files = [
                     os.path.join(record.directory, f)
                     for f in os.listdir(record.directory)
@@ -493,11 +496,15 @@ class SyncTags(models.Model):
                 ]
 
                 if not files:
-                    record.send_notification("Sin Etiquetas", "No hay archivos .txt para imprimir.", 'warning', True)
+                    record.send_notification(
+                        "Sin Etiquetas",
+                        "No hay archivos .txt para imprimir.",
+                        'warning',
+                        True,
+                    )
                     record.result_summary = "No hay archivos .txt para imprimir."
                     return
 
-                # Orden de impresión
                 def extract_order_number(filename):
                     base = os.path.basename(filename)
                     match = re.search(r'(OV\s+\d{4}-\d{8})', base)
@@ -505,24 +512,32 @@ class SyncTags(models.Model):
                         match = re.search(r'(\d{4}-\d{8})', base)
                     if not match:
                         return 0
-                    return int(match.group(0).replace('OV', '').replace(' ', '').replace('-', ''))
+                    return int(
+                        match.group(0)
+                        .replace('OV', '')
+                        .replace(' ', '')
+                        .replace('-', '')
+                    )
 
-                files.sort(key=extract_order_number, reverse=(record.print_order == 'desc'))
+                files.sort(
+                    key=extract_order_number,
+                    reverse=(record.print_order == 'desc'),
+                )
 
                 models_proxy, uid, db, password = record.connection()
-
                 pause_counter = 0
                 order_cache = {}
 
                 for file_path in files:
                     file_name = os.path.basename(file_path)
-                    order_name = file_name.split('_')[0] if '_' in file_name else file_name
+                    order_name = (
+                        file_name.split('_')[0] if '_' in file_name else file_name
+                    )
 
                     with open(file_path, 'rb') as f:
                         raw_data = f.read()
 
                     if raw_data.startswith(b'^') or raw_data.startswith(b'N'):
-                        # Detectar ZPL/EPL y aplicar tamaño
                         processed_data = self._apply_label_size(raw_data)
                     else:
                         processed_data = raw_data
@@ -530,7 +545,7 @@ class SyncTags(models.Model):
                     sent = False
                     errors = []
 
-                    # Intento RAW
+                    # RAW
                     try:
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.settimeout(5)
@@ -542,7 +557,7 @@ class SyncTags(models.Model):
                         errors.append(f"RAW: {e}")
                         _logger.error(f"Error RAW al imprimir {file_name}: {e}")
 
-                    # Intento CUPS si RAW falla
+                    # CUPS fallback
                     if not sent and record.cups_enabled and record.cups_printer:
                         try:
                             import subprocess
@@ -550,11 +565,14 @@ class SyncTags(models.Model):
                                 ['lp', '-d', record.cups_printer],
                                 stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE
+                                stderr=subprocess.PIPE,
                             )
                             stdout, stderr = process.communicate(input=processed_data)
                             if process.returncode != 0:
-                                raise UserError(stderr.decode('utf-8') or 'Error desconocido en CUPS.')
+                                raise UserError(
+                                    stderr.decode('utf-8')
+                                    or 'Error desconocido en CUPS.'
+                                )
                             sent = True
                         except Exception as e:
                             errors.append(f"CUPS: {e}")
@@ -565,17 +583,15 @@ class SyncTags(models.Model):
                             "Error al Imprimir",
                             f"No se pudo imprimir la etiqueta {file_name}: {'; '.join(errors)}",
                             'danger',
-                            True
+                            True,
                         )
                         continue
 
-                    # Si llegamos aquí, se imprimió OK
                     record.send_notification(
                         "Etiqueta Impresa",
                         f"Se imprimió la etiqueta {file_name}.",
                     )
 
-                    # Marcar orden como procesada (agrega tag remoto + log local)
                     self.mark_order_as_processed(
                         models_proxy, uid, db, password, order_name, file_name, order_cache
                     )
@@ -584,7 +600,8 @@ class SyncTags(models.Model):
                     if pause_counter >= record.pause_after:
                         record.send_notification(
                             "Pausa de Impresión",
-                            f"Se imprimieron {pause_counter} etiquetas. Pausando {record.pause_duration} segundos.",
+                            f"Se imprimieron {pause_counter} etiquetas. "
+                            f"Pausando {record.pause_duration} segundos.",
                         )
                         time.sleep(record.pause_duration)
                         pause_counter = 0
@@ -599,14 +616,12 @@ class SyncTags(models.Model):
                 raise UserError(f"Error durante la impresión de etiquetas: {e}")
 
     # ---------------------------
-    # Marcado de órdenes remotas (tag + log)
+    # Marcado de órdenes remotas
     # ---------------------------
     def mark_order_as_processed(self, models_proxy, uid, db, password,
                                 order_name, label_name, order_cache):
-        """Marca la orden remota como procesada agregando el tag remoto y registrando el log local."""
         for record in self:
             try:
-                # Cache local para no hacer search_read por cada etiqueta
                 if order_name in order_cache:
                     order_id, tag_ids = order_cache[order_name]
                 else:
@@ -633,7 +648,6 @@ class SyncTags(models.Model):
                     tag_ids = set(order[0]['tag_ids'] or [])
                     order_cache[order_name] = (order_id, tag_ids)
 
-                # Aseguramos que el tag remoto esté seteado
                 tag_id_int = int(record.tag)
                 if tag_id_int not in tag_ids:
                     self._execute_kw_with_retry(
@@ -648,7 +662,6 @@ class SyncTags(models.Model):
                     tag_ids.add(tag_id_int)
                     order_cache[order_name] = (order_id, tag_ids)
 
-                # Log local
                 self.env['processed.order.log'].create({
                     'order_name': order_name,
                     'label_name': label_name,
@@ -677,13 +690,11 @@ class SyncTags(models.Model):
     # ---------------------------
     def _dots_per_mm(self):
         dpi = int(self.printer_dpi or 203)
-        # 1 pulgada = 25.4mm
-        return dpi / 25.4
+        return dpi / 25.4  # 1 pulgada = 25.4mm
 
     def _apply_label_size(self, raw_data):
         """Detecta ZPL/EPL y ajusta el tamaño de la etiqueta según la config."""
         try:
-            b = raw_data
             txt = raw_data.decode('latin-1', errors='ignore')
         except Exception:
             return raw_data
@@ -715,18 +726,16 @@ class SyncTags(models.Model):
 
         # EPL
         if txt.startswith('N'):
+            b = raw_data
             lines = b.split(b"\n")
             out = []
             inserted = False
-            for i, line in enumerate(lines):
+            for line in lines:
                 out.append(line)
                 if not inserted and line.strip() == b"N":
                     out.append(f"q{pw}\n".encode("ascii"))
-                    # El segundo parámetro de Q es gap; dejamos 24 por defecto
                     out.append(f"Q{ll},24\n".encode("ascii"))
                     inserted = True
-            b = b"".join(out)
-            return b
+            return b"".join(out)
 
-        # Si no detectamos lenguaje, lo dejamos tal cual
-        return b
+        return raw_data
