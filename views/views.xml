@@ -1,0 +1,112 @@
+<odoo>
+  <data>
+
+    <!-- Vista de lista para SyncTags -->
+    <record model="ir.ui.view" id="synctags.list">
+      <field name="name">synctags list</field>
+      <field name="model">synctags.synctags</field>
+      <field name="arch" type="xml">
+        <tree>
+          <field name="name"/>
+          <field name="url"/>
+          <button name="test_printer" type="object" string="Probar impresora" class="oe_highlight"/>
+        </tree>
+      </field>
+    </record>
+
+    <!-- Vista de formulario para SyncTags -->
+    <record model="ir.ui.view" id="synctags.form">
+      <field name="name">synctags form</field>
+      <field name="model">synctags.synctags</field>
+      <field name="arch" type="xml">
+        <form string="SyncTags">
+          <sheet>
+            <group>
+              <field name="name"/>
+              <field name="url"/>
+              <field name="db"/>
+              <field name="username"/>
+              <field name="password" password="True"/>
+              <field name="directory"/>
+
+              <!-- IDs remotos simples, sin M2O locales -->
+              <field name="type_remote_id"/>
+              <field name="team_remote_id"/>
+
+              <field name="tag"/>
+              <field name="delivery_status"/>
+              <field name="order_line_filter"/>
+
+              <field name="printer_ip"/>
+              <field name="printer_port"/>
+              <field name="print_order"/>
+              <field name="max_threads" widget="integer"/>
+              <field name="batch_size"/>
+            </group>
+
+            <group string="Configuración de Pausa">
+              <field name="pause_after"/>
+              <field name="pause_duration"/>
+            </group>
+            
+            <group string="Impresora / Tamaño">
+              <field name="printer_dpi"/>
+              <field name="label_width_mm"/>
+              <field name="label_height_mm"/>
+            </group>
+
+
+            <!-- Botón de acción -->
+            <button name="process_orders" type="object" string="Procesar Órdenes" class="btn-primary"/>
+
+            <field name="result_summary" readonly="1"/>
+          </sheet>
+        </form>
+      </field>
+    </record>
+
+    <!-- Vista de lista para processed.order.log -->
+    <record id="view_processed_order_log_tree" model="ir.ui.view">
+      <field name="name">processed.order.log.tree</field>
+      <field name="model">processed.order.log</field>
+      <field name="arch" type="xml">
+        <tree string="Registro de Órdenes Procesadas">
+          <field name="order_name"/>
+          <field name="label_name"/>
+          <field name="processed_date"/>
+          <field name="synctags_id"/>
+        </tree>
+      </field>
+    </record>
+
+    <!-- Acción para vistas de SyncTags -->
+    <record model="ir.actions.act_window" id="synctags.action_window">
+      <field name="name">SyncTags</field>
+      <field name="res_model">synctags.synctags</field>
+      <field name="view_mode">tree,form</field>
+    </record>
+
+    <!-- Acción para la vista de lista de processed.order.log -->
+    <record id="action_processed_order_log" model="ir.actions.act_window">
+      <field name="name">Registro de Órdenes Procesadas</field>
+      <field name="res_model">processed.order.log</field>
+      <field name="view_mode">tree</field>
+    </record>
+
+    <!-- Menú principal -->
+    <menuitem name="SyncTags" id="synctags.menu_root" sequence="1"/>
+
+    <!-- Menú con acción para gestión de SyncTags -->
+    <menuitem name="Gestión de SyncTags"
+              id="synctags.menu_manage"
+              parent="synctags.menu_root"
+              action="synctags.action_window"/>
+
+    <!-- Menú para registro de órdenes procesadas -->
+    <menuitem name="Registro de Órdenes Procesadas"
+              id="menu_processed_order_log"
+              parent="synctags.menu_root"
+              action="action_processed_order_log"/>
+
+  </data>
+</odoo>
