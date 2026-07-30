@@ -274,7 +274,7 @@ class SyncTags(models.Model):
                     ('delivery_status', '=', record.delivery_status),
                     ('type_id', '=', record.type_remote_id),
                     ('order_line.name', 'ilike', record.order_line_filter),
-                    ('tag_ids', '=', False),
+                    ('tag_ids', 'not ilike', 'impreso'),
                 ]
                 # if record.team_remote_id:
                 #     criteria.append(('team_id', '=', record.team_remote_id))
