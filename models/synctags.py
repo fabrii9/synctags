@@ -218,7 +218,7 @@ class SyncTags(models.Model):
     # ---------------------------
     def send_notification(self, title, message, message_type='info', sticky=False):
         payload = {'title': title, 'message': message, 'sticky': sticky, 'type': message_type}
-        self.env['bus.bus'].sudo()._sendone(self.env.user.partner_id, 'simple_notification', payload)
+        self.env.user._bus_send('simple_notification', payload)
 
     # ---------------------------
     # Helpers XML-RPC (bulk)
