@@ -171,7 +171,8 @@
     </record>
 
     <!-- Menú principal -->
-    <menuitem name="SyncTags" id="synctags.menu_root" sequence="1"/>
+    <menuitem name="SyncTags" id="synctags.menu_root" sequence="1"
+              web_icon="synctags,static/description/icon.png"/>
 
     <!-- Menú con acción para gestión de SyncTags -->
     <menuitem name="Configuraciones"
