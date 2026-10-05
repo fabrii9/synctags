@@ -24,19 +24,34 @@ class SyncTags(models.Model):
     db = fields.Char(string="Base de Datos", required=True)
     username = fields.Char(string="Usuario", required=True)
     password = fields.Char(string="Contraseña", required=True)  # opcional: usar ir.config_parameter
-    directory = fields.Char(string="Directorio etiquetas", required=True)
+    directory = fields.Char(
+        string="Directorio etiquetas", required=True,
+        help="Carpeta del servidor donde se descargan los .txt antes de imprimir. "
+             "Se vacía al inicio de cada procesamiento."
+    )
 
     # --- Filtros para la búsqueda remota (sin M2O locales) ---
-    type_remote_id = fields.Integer(string="Tipo de pedido (ID remoto)", required=True)
-    tag = fields.Char(string="Etiqueta (ID M2M remoto)", required=True)
-    delivery_status = fields.Char(string="Estado de la entrega", required=True)
+    type_remote_id = fields.Integer(
+        string="Tipo de pedido (ID remoto)", required=True,
+        help="ID del tipo de pedido (sale.order type_id) en el Odoo remoto."
+    )
+    tag = fields.Char(
+        string="Etiqueta (ID M2M remoto)", required=True,
+        help="ID de la etiqueta que se agrega a la orden remota una vez impresa."
+    )
+    delivery_status = fields.Char(
+        string="Estado de la entrega", required=True,
+        help="Valor técnico de delivery_status en el Odoo remoto (ej. pending, partial)."
+    )
     team_remote_id = fields.Integer(
-        string="Equipo de venta (ID remoto)"
+        string="Equipo de venta (ID remoto)",
+        help="Actualmente no se aplica como filtro."
     )  # opcional, no usado si no lo agregás al dominio
     order_line_filter = fields.Char(
         string="Filtro en líneas de pedido",
         default="Mercado Envios Coleta",
-        required=True
+        required=True,
+        help="Se buscan órdenes con alguna línea cuyo nombre contenga este texto."
     )
 
     # --- Performance/impresión ---
@@ -71,6 +86,10 @@ class SyncTags(models.Model):
 
     result_summary = fields.Text(string="Resumen de Resultados", readonly=True)
 
+    # Historial
+    log_count = fields.Integer(string="Etiquetas impresas", compute='_compute_log_stats')
+    last_processed_date = fields.Datetime(string="Última impresión", compute='_compute_log_stats')
+
     # Pausa
     pause_after = fields.Integer(string="Pausar después de (número de etiquetas)", default=10, required=True)
     pause_duration = fields.Integer(string="Duración de la pausa (segundos)", default=5, required=True)
@@ -84,6 +103,39 @@ class SyncTags(models.Model):
     )
     label_width_mm = fields.Integer(string="Ancho etiqueta (mm)", default=100, required=True)
     label_height_mm = fields.Integer(string="Alto etiqueta (mm)", default=50, required=True)
+
+    def _compute_log_stats(self):
+        stats = {
+            synctags.id: (count, last_date)
+            for synctags, count, last_date in self.env['processed.order.log']._read_group(
+                [('synctags_id', 'in', self.ids)],
+                ['synctags_id'],
+                ['__count', 'processed_date:max'],
+            )
+        }
+        for record in self:
+            record.log_count, record.last_processed_date = stats.get(record.id, (0, False))
+
+    def action_view_logs(self):
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': "Etiquetas impresas",
+            'res_model': 'processed.order.log',
+            'view_mode': 'list',
+            'domain': [('synctags_id', '=', self.id)],
+            'context': {'default_synctags_id': self.id},
+        }
+
+    def action_test_connection(self):
+        """Valida URL, base y credenciales contra el Odoo remoto."""
+        for record in self:
+            record.connection()
+            record.send_notification(
+                "Conexión Exitosa",
+                f"Autenticado en {record.url} (base {record.db}).",
+                'success',
+            )
 
     # ---------------------------
     # Boton test impresora

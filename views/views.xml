@@ -8,8 +8,13 @@
       <field name="arch" type="xml">
         <list>
           <field name="name"/>
-          <field name="url"/>
-          <button name="test_printer" type="object" string="Probar impresora" class="oe_highlight"/>
+          <field name="url" widget="url"/>
+          <field name="db" optional="hide"/>
+          <field name="printer_ip"/>
+          <field name="printer_port" optional="hide"/>
+          <field name="last_processed_date"/>
+          <field name="log_count" optional="show"/>
+          <button name="test_printer" type="object" string="Probar impresora" icon="print"/>
         </list>
       </field>
     </record>
@@ -20,46 +25,92 @@
       <field name="model">synctags.synctags</field>
       <field name="arch" type="xml">
         <form string="SyncTags">
+          <header>
+            <button name="process_orders" type="object" string="Procesar Órdenes" class="oe_highlight"
+                    confirm="Se descargarán e imprimirán las etiquetas pendientes y las órdenes quedarán marcadas en el Odoo remoto. ¿Continuar?"/>
+            <button name="action_test_connection" type="object" string="Probar conexión"/>
+            <button name="check_printer_connection" type="object" string="Verificar impresora"/>
+            <button name="test_printer" type="object" string="Imprimir etiqueta de prueba"/>
+          </header>
           <sheet>
-            <group>
-              <field name="name"/>
-              <field name="url"/>
-              <field name="db"/>
-              <field name="username"/>
-              <field name="password" password="True"/>
-              <field name="directory"/>
+            <div class="oe_button_box" name="button_box">
+              <button name="action_view_logs" type="object" class="oe_stat_button" icon="history">
+                <div class="o_stat_info">
+                  <field name="log_count" class="o_stat_value"/>
+                  <span class="o_stat_text">Impresas</span>
+                </div>
+              </button>
+            </div>
 
-              <!-- IDs remotos simples, sin M2O locales -->
-              <field name="type_remote_id"/>
-              <field name="team_remote_id"/>
+            <div class="oe_title">
+              <label for="name"/>
+              <h1><field name="name" placeholder="ej. Mercado Envíos Coleta"/></h1>
+            </div>
 
-              <field name="tag"/>
-              <field name="delivery_status"/>
-              <field name="order_line_filter"/>
+            <div class="alert alert-info" role="status" invisible="not result_summary">
+              <strong>Último resultado: </strong><field name="result_summary" nolabel="1"/>
+            </div>
 
-              <field name="printer_ip"/>
-              <field name="printer_port"/>
-              <field name="print_order"/>
-              <field name="max_threads" widget="integer"/>
-              <field name="batch_size"/>
-            </group>
+            <notebook>
+              <page string="Odoo remoto" name="remote">
+                <group>
+                  <group string="Conexión">
+                    <field name="url" widget="url" placeholder="https://empresa.adhoc.ar"/>
+                    <field name="db"/>
+                    <field name="username"/>
+                    <field name="password" password="True"/>
+                  </group>
+                  <group string="Órdenes a imprimir">
+                    <field name="type_remote_id"/>
+                    <field name="delivery_status" placeholder="ej. pending"/>
+                    <field name="order_line_filter"/>
+                    <field name="tag"/>
+                    <field name="team_remote_id"/>
+                  </group>
+                </group>
+              </page>
 
-            <group string="Configuración de Pausa">
-              <field name="pause_after"/>
-              <field name="pause_duration"/>
-            </group>
-            
-            <group string="Impresora / Tamaño">
-              <field name="printer_dpi"/>
-              <field name="label_width_mm"/>
-              <field name="label_height_mm"/>
-            </group>
+              <page string="Impresora" name="printer">
+                <group>
+                  <group string="Red">
+                    <field name="printer_ip" placeholder="ej. 192.168.1.50"/>
+                    <field name="printer_port"/>
+                    <field name="cups_enabled"/>
+                    <field name="cups_printer" invisible="not cups_enabled" required="cups_enabled"/>
+                  </group>
+                  <group string="Etiqueta">
+                    <field name="printer_dpi"/>
+                    <label for="label_width_mm" string="Tamaño"/>
+                    <div class="o_row">
+                      <field name="label_width_mm" class="oe_inline"/>
+                      <span>×</span>
+                      <field name="label_height_mm" class="oe_inline"/>
+                      <span>mm</span>
+                    </div>
+                    <field name="print_order"/>
+                  </group>
+                </group>
+              </page>
 
-
-            <!-- Botón de acción -->
-            <button name="process_orders" type="object" string="Procesar Órdenes" class="btn-primary"/>
-
-            <field name="result_summary" readonly="1"/>
+              <page string="Rendimiento" name="performance">
+                <group>
+                  <group string="Descarga">
+                    <field name="directory" placeholder="/home/odoo/etiquetas"/>
+                    <field name="max_threads"/>
+                    <field name="batch_size"/>
+                  </group>
+                  <group string="Pausa entre etiquetas">
+                    <label for="pause_after" string="Pausar cada"/>
+                    <div class="o_row">
+                      <field name="pause_after" class="oe_inline"/>
+                      <span>etiquetas durante</span>
+                      <field name="pause_duration" class="oe_inline"/>
+                      <span>segundos</span>
+                    </div>
+                  </group>
+                </group>
+              </page>
+            </notebook>
           </sheet>
         </form>
       </field>
@@ -70,12 +121,30 @@
       <field name="name">processed.order.log.list</field>
       <field name="model">processed.order.log</field>
       <field name="arch" type="xml">
-        <list string="Registro de Órdenes Procesadas">
+        <list string="Registro de Órdenes Procesadas" create="0" edit="0">
+          <field name="processed_date"/>
+          <field name="order_name"/>
+          <field name="label_name" optional="show"/>
+          <field name="synctags_id" optional="show"/>
+        </list>
+      </field>
+    </record>
+
+    <!-- Búsqueda para processed.order.log -->
+    <record id="view_processed_order_log_search" model="ir.ui.view">
+      <field name="name">processed.order.log.search</field>
+      <field name="model">processed.order.log</field>
+      <field name="arch" type="xml">
+        <search>
           <field name="order_name"/>
           <field name="label_name"/>
-          <field name="processed_date"/>
           <field name="synctags_id"/>
-        </list>
+          <filter string="Fecha" name="filter_processed_date" date="processed_date"/>
+          <group>
+            <filter string="Configuración" name="group_synctags" context="{'group_by': 'synctags_id'}"/>
+            <filter string="Día" name="group_day" context="{'group_by': 'processed_date:day'}"/>
+          </group>
+        </search>
       </field>
     </record>
 
@@ -84,6 +153,10 @@
       <field name="name">SyncTags</field>
       <field name="res_model">synctags.synctags</field>
       <field name="view_mode">list,form</field>
+      <field name="help" type="html">
+        <p class="o_view_nocontent_smiling_face">Crear una configuración</p>
+        <p>Cada configuración conecta con un Odoo remoto, descarga las etiquetas de sus entregas y las envía a una impresora.</p>
+      </field>
     </record>
 
     <!-- Acción para la vista de lista de processed.order.log -->
@@ -91,22 +164,28 @@
       <field name="name">Registro de Órdenes Procesadas</field>
       <field name="res_model">processed.order.log</field>
       <field name="view_mode">list</field>
+      <field name="help" type="html">
+        <p class="o_view_nocontent_empty_folder">Todavía no se imprimieron etiquetas</p>
+        <p>Cada etiqueta impresa y marcada en el Odoo remoto aparece acá.</p>
+      </field>
     </record>
 
     <!-- Menú principal -->
     <menuitem name="SyncTags" id="synctags.menu_root" sequence="1"/>
 
     <!-- Menú con acción para gestión de SyncTags -->
-    <menuitem name="Gestión de SyncTags"
+    <menuitem name="Configuraciones"
               id="synctags.menu_manage"
               parent="synctags.menu_root"
-              action="synctags.action_window"/>
+              action="synctags.action_window"
+              sequence="10"/>
 
     <!-- Menú para registro de órdenes procesadas -->
     <menuitem name="Registro de Órdenes Procesadas"
               id="menu_processed_order_log"
               parent="synctags.menu_root"
-              action="action_processed_order_log"/>
+              action="action_processed_order_log"
+              sequence="20"/>
 
   </data>
 </odoo>
